@@ -1,4 +1,5 @@
 import base64
+import json
 from enum import Enum
 from urllib.parse import urlparse
 
@@ -214,8 +215,12 @@ def parse_http_spec(http_spec: str) -> LLMSpec:
     for key, value in secrets.items():
         if not value:
             continue
-        key = key.strip("$")
-        body = body.replace(f"${key}", value)
+        placeholder = f"${key.strip('$')}"
+        body = body.replace(placeholder, value)
+        headers = {
+            header_name: header_value.replace(placeholder, value)
+            for header_name, header_value in headers.items()
+        }
 
     return LLMSpec(
         method=method,
@@ -229,22 +234,5 @@ def parse_http_spec(http_spec: str) -> LLMSpec:
 
 
 def escape_special_chars_for_json(prompt: str) -> str:
-    """Escapes special characters in a string for safe inclusion in a JSON
-    template.
-
-    Args:
-        prompt (str): The input string to be escaped.
-
-    Returns:
-        str: The escaped string.
-    """
-    # Escape backslashes first to avoid double escaping
-    escaped_prompt = prompt.replace("\\", "\\\\")
-
-    # Escape other special characters
-    escaped_prompt = escaped_prompt.replace('"', '\\"')
-    escaped_prompt = escaped_prompt.replace("\n", "\\n")
-    escaped_prompt = escaped_prompt.replace("\r", "\\r")
-    escaped_prompt = escaped_prompt.replace("\t", "\\t")
-
-    return escaped_prompt
+    """Return a JSON-safe string fragment without surrounding quotes."""
+    return json.dumps(prompt, ensure_ascii=False)[1:-1]

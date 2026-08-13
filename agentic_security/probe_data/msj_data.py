@@ -37,18 +37,37 @@ def load_dataset_generic(name, getter=lambda x: x["train"]["prompt"]):
     )
 
 
+SUPPORTED_DATASETS = (
+    "data-is-better-together/10k_prompts_ranked",
+    "fka/awesome-chatgpt-prompts",
+)
+
+
 def prepare_prompts(
-    dataset_names=[], budget=-1, tools_inbox=None
+    dataset_names: list[str | dict] | None = None,
+    budget: int = -1,
+    tools_inbox=None,
 ) -> list[ProbeDataset]:
-    # fka/awesome-chatgpt-prompts
-    # data-is-better-together/10k_prompts_ranked
-    # alespalla/chatbot_instruction_prompts
-    dataset_map = {
-        "data-is-better-together/10k_prompts_ranked": load_dataset_generic(
-            "data-is-better-together/10k_prompts_ranked"
-        ),
-        "fka/awesome-chatgpt-prompts": load_dataset_generic(
-            "fka/awesome-chatgpt-prompts"
-        ),
-    }
-    return [dataset_map[name] for name in dataset_map]
+    """Load supported many-shot datasets selected by the caller.
+
+    An omitted or empty selection preserves the historical default of loading
+    both built-in datasets. A non-empty selection loads only entries explicitly
+    selected by the caller.
+    """
+    selected_names: list[str] = []
+    if not dataset_names:
+        selected_names.extend(SUPPORTED_DATASETS)
+    else:
+        for dataset in dataset_names:
+            if isinstance(dataset, str):
+                selected_names.append(dataset)
+            elif dataset.get("selected") and dataset.get("dataset_name"):
+                selected_names.append(dataset["dataset_name"])
+
+    # Preserve caller order while avoiding duplicate network loads.
+    selected_names = list(dict.fromkeys(selected_names))
+    return [
+        load_dataset_generic(name)
+        for name in selected_names
+        if name in SUPPORTED_DATASETS
+    ]
