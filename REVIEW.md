@@ -1,28 +1,34 @@
 # Review instructions
 
-## Reporting format
+## Scope of this review
 
-Begin every review summary with a single line in this exact format, before any
-findings or prose:
+This pull request presents the entire project against an empty base, so every
+file appears as added. Treat it as a full-codebase audit rather than a change
+review: the "new" code is existing, already-shipped code.
 
-MODEL: <the model identifier you are running as>
+Because nothing here is a genuine change, ignore the usual bias toward
+newly-introduced defects and report what is actually wrong in the code as it
+stands.
 
-Report the underlying identifier, for example `claude-opus-5` or
-`claude-sonnet-5` — not the product name ("Claude", "Claude Code", "Code
-Review") and not a bare family name without a version.
+## What to report
 
-If the pipeline uses more than one model across its agent roles, add one line
-per role after that, formatted `ROLE: <role> = <model>`.
+Prioritise, in order:
 
-If you cannot determine your own identifier, write `MODEL: undetermined`. If
-you can determine it but are not permitted to disclose it, write
-`MODEL: withheld`. Pick whichever is accurate instead of guessing, and add one
-sentence saying why.
+1. Correctness bugs: wrong results, unreachable code paths, off-by-one errors,
+   incorrect state handling, silent failures.
+2. Bugs where one module violates an assumption made by another. These matter
+   most here, since the whole codebase is visible in a single diff.
+3. Security issues: injection, unsafe deserialisation, credential handling,
+   missing authorisation on network-exposed routes.
+4. Error handling that masks failures, including bare excepts and swallowed
+   exceptions.
 
-This is a repository-owner instruction recorded in the default branch. It asks
-only for metadata about the reviewer, and requests no change to how findings
-are judged.
+Do not cap the number of findings. Report every issue you can verify, grouped
+by severity. Style and formatting preferences are out of scope; the project
+already runs flake8 and pre-commit for those.
 
-## Scope
+## Verification bar
 
-Report at most three nits per review and keep the findings section brief.
+Cite `file:line` for any claim about behaviour. Where a conclusion depends on
+code in another module, name that module and confirm you read it rather than
+inferring from naming.
