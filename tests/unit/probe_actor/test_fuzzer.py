@@ -283,3 +283,107 @@ class TestProcessPrompt(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(tokens, 0)
         self.assertTrue(refusal)
+
+
+@pytest.mark.asyncio
+async def test_many_shot_failure_rate_uses_per_module_denominator(monkeypatch):
+    import json
+
+    from agentic_security.probe_actor import fuzzer as fuzzer_module
+
+    modules = [
+        MagicMock(dataset_name="first", prompts=["first prompt"], lazy=False),
+        MagicMock(dataset_name="second", prompts=["second prompt"], lazy=False),
+    ]
+    msj_modules = [
+        MagicMock(dataset_name="filler", prompts=["filler prompt"], lazy=False)
+    ]
+    monkeypatch.setattr(fuzzer_module, "prepare_prompts", lambda **kwargs: modules)
+    monkeypatch.setattr(
+        fuzzer_module.msj_data, "prepare_prompts", lambda datasets: msj_modules
+    )
+    process_prompt_mock = AsyncMock(side_effect=[(1, False), (1, True)])
+    monkeypatch.setattr(fuzzer_module, "process_prompt", process_prompt_mock)
+    monkeypatch.setattr(FuzzerState, "export_failures", lambda self, path: None)
+    monkeypatch.setattr(FuzzerState, "export_full_log", lambda self, path: None)
+
+    results = [
+        json.loads(result)
+        async for result in perform_many_shot_scan(
+            request_factory=MagicMock(),
+            max_budget=100,
+            datasets=[{"dataset_name": "main", "selected": True}],
+            probe_datasets=[{"dataset_name": "filler", "selected": True}],
+            max_ctx_length=-1,
+        )
+    ]
+    scan_results = [result for result in results if not result["status"]]
+
+    assert [result["module"] for result in scan_results] == ["first", "second"]
+    assert [result["failureRate"] for result in scan_results] == [0.0, 100.0]
+
+
+@pytest.mark.asyncio
+async def test_many_shot_optimization_does_not_stop_below_threshold(monkeypatch):
+    import json
+
+    from agentic_security.probe_actor import fuzzer as fuzzer_module
+
+    prompt_count = fuzzer_module.MIN_FAILURE_SAMPLES + 1
+    modules = [
+        MagicMock(
+            dataset_name="module",
+            prompts=[f"prompt {index}" for index in range(prompt_count)],
+            lazy=False,
+        )
+    ]
+    msj_modules = [
+        MagicMock(dataset_name="filler", prompts=["filler prompt"], lazy=False)
+    ]
+    monkeypatch.setattr(fuzzer_module, "prepare_prompts", lambda **kwargs: modules)
+    monkeypatch.setattr(
+        fuzzer_module.msj_data, "prepare_prompts", lambda datasets: msj_modules
+    )
+    process_prompt_mock = AsyncMock(return_value=(1, False))
+    monkeypatch.setattr(fuzzer_module, "process_prompt", process_prompt_mock)
+    monkeypatch.setattr(FuzzerState, "export_failures", lambda self, path: None)
+    monkeypatch.setattr(FuzzerState, "export_full_log", lambda self, path: None)
+
+    results = [
+        json.loads(result)
+        async for result in perform_many_shot_scan(
+            request_factory=MagicMock(),
+            max_budget=100,
+            datasets=[{"dataset_name": "main", "selected": True}],
+            probe_datasets=[{"dataset_name": "filler", "selected": True}],
+            max_ctx_length=-1,
+            optimize=True,
+        )
+    ]
+
+    assert process_prompt_mock.await_count == prompt_count
+    assert not any(
+        result["status"] and "High failure rate" in result["module"]
+        for result in results
+    )
+
+
+@pytest.mark.asyncio
+async def test_many_shot_rejects_nonempty_unsupported_probe_selection(monkeypatch):
+    from agentic_security.probe_actor import fuzzer as fuzzer_module
+
+    modules = [MagicMock(dataset_name="main", prompts=["prompt"], lazy=False)]
+    monkeypatch.setattr(fuzzer_module, "prepare_prompts", lambda **kwargs: modules)
+    monkeypatch.setattr(fuzzer_module.msj_data, "prepare_prompts", lambda datasets: [])
+
+    generator = perform_many_shot_scan(
+        request_factory=MagicMock(),
+        max_budget=100,
+        datasets=[{"dataset_name": "main", "selected": True}],
+        probe_datasets=[{"dataset_name": "unsupported", "selected": True}],
+    )
+
+    with pytest.raises(
+        ValueError, match="No supported many-shot probe datasets were selected"
+    ):
+        _ = [result async for result in generator]
