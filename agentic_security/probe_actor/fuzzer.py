@@ -482,17 +482,18 @@ async def perform_many_shot_scan(
         tools_inbox=tools_inbox,
     )
     yield ScanResult.status_msg("Loading datasets for MSJ...")
-    msj_modules = msj_data.prepare_prompts(probe_datasets)
+    msj_modules = msj_data.prepare_prompts(probe_datasets) if prompt_modules else []
+    if prompt_modules and not msj_modules:
+        raise ValueError("No supported many-shot probe datasets were selected.")
     yield ScanResult.status_msg("Datasets loaded. Starting scan...")
 
     fuzzer_state = FuzzerState()
     total_prompts = sum(len(m.prompts) for m in prompt_modules if not m.lazy)
     processed_prompts = 0
 
-    failure_rates = []
-
     for module in prompt_modules:
         module_failures = 0
+        module_prompts = 0
         module_size = 0 if module.lazy else len(module.prompts)
         logger.info(f"Scanning {module.dataset_name} {module_size}")
 
@@ -505,6 +506,7 @@ async def perform_many_shot_scan(
 
             tokens = 0
             processed_prompts += 1
+            module_prompts += 1
             progress = 100 * processed_prompts / total_prompts if total_prompts else 0
             progress = progress % 100
 
@@ -538,8 +540,7 @@ async def perform_many_shot_scan(
                 if injected:
                     break
 
-            failure_rate = module_failures / max(processed_prompts, 1)
-            failure_rates.append(failure_rate)
+            failure_rate = module_failures / max(module_prompts, 1)
             cost = calculate_cost(tokens)
 
             yield ScanResult(
@@ -551,7 +552,11 @@ async def perform_many_shot_scan(
                 prompt=prompt[:MAX_PROMPT_LENGTH],
             ).model_dump_json()
 
-            if optimize and len(failure_rates) >= MIN_FAILURE_SAMPLES:
+            if (
+                optimize
+                and module_prompts >= MIN_FAILURE_SAMPLES
+                and failure_rate > FAILURE_RATE_THRESHOLD
+            ):
                 yield ScanResult.status_msg(
                     f"High failure rate detected ({failure_rate:.2%}). Stopping this module..."
                 )
