@@ -32,29 +32,35 @@ class AsyncTokenBucketRateLimiter:
         self._lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(self.config.max_concurrent_requests)
         self._current_backoff = 0.0
+        self._backoff_until = 0.0
 
     async def acquire(self) -> None:
-        """Acquire permission to dispatch a request, waiting if rate limits are reached."""
+        """Acquire permission to dispatch a request, safely releasing semaphore on cancellation."""
         await self._semaphore.acquire()
-        async with self._lock:
-            while True:
-                now = time.monotonic()
-                elapsed = now - self.last_update
-                self.last_update = now
-                self.tokens = min(self.capacity, self.tokens + elapsed * self.fill_rate)
+        try:
+            async with self._lock:
+                while True:
+                    now = time.monotonic()
 
-                if self._current_backoff > 0:
-                    sleep_time = self._current_backoff
-                    self._current_backoff = 0.0
-                    await asyncio.sleep(sleep_time)
-                    continue
+                    # Wait for active backoff window if throttled
+                    if now < self._backoff_until:
+                        wait_backoff = self._backoff_until - now
+                        await asyncio.sleep(wait_backoff)
+                        continue
 
-                if self.tokens >= 1.0:
-                    self.tokens -= 1.0
-                    break
+                    elapsed = now - self.last_update
+                    self.last_update = now
+                    self.tokens = min(self.capacity, self.tokens + elapsed * self.fill_rate)
 
-                wait_time = (1.0 - self.tokens) / self.fill_rate
-                await asyncio.sleep(wait_time)
+                    if self.tokens >= 1.0:
+                        self.tokens -= 1.0
+                        break
+
+                    wait_time = (1.0 - self.tokens) / self.fill_rate
+                    await asyncio.sleep(wait_time)
+        except BaseException:
+            self._semaphore.release()
+            raise
 
     def release(self) -> None:
         """Release the concurrency slot."""
@@ -63,7 +69,7 @@ class AsyncTokenBucketRateLimiter:
     def record_throttle_event(self) -> float:
         """
         Record a 429 Too Many Requests or 503 Service Unavailable event
-        and compute adaptive backoff with jitter.
+        and escalate backoff with jitter.
         """
         if self._current_backoff <= 0:
             next_backoff = self.config.initial_backoff_sec
@@ -73,9 +79,16 @@ class AsyncTokenBucketRateLimiter:
                 self._current_backoff * self.config.backoff_factor,
             )
 
+        self._current_backoff = next_backoff
         jitter = random.uniform(-self.config.jitter_range, self.config.jitter_range)
-        self._current_backoff = max(0.1, next_backoff * (1.0 + jitter))
+        duration = max(0.1, next_backoff * (1.0 + jitter))
+        self._backoff_until = time.monotonic() + duration
         logger.warning(
-            f"Rate limiter throttled: backing off for {self._current_backoff:.2f}s"
+            f"Rate limiter throttled: backing off for {duration:.2f}s (base: {next_backoff:.2f}s)"
         )
-        return self._current_backoff
+        return duration
+
+    def reset_backoff(self) -> None:
+        """Reset backoff escalation upon successful request completion."""
+        self._current_backoff = 0.0
+        self._backoff_until = 0.0
