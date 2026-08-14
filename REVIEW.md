@@ -1,34 +1,23 @@
-# Review instructions
+# Full Project Review Instructions & Feature Architecture Audit
 
 ## Scope of this review
 
-This pull request presents the entire project against an empty base, so every
-file appears as added. Treat it as a full-codebase audit rather than a change
-review: the "new" code is existing, already-shipped code.
+This pull request presents the entire project (199 files) against an empty base commit (`review-base-empty`), so every file is visible in the diff payload.
 
-Because nothing here is a genuine change, ignore the usual bias toward
-newly-introduced defects and report what is actually wrong in the code as it
-stands.
+Treat this review as a dual-purpose audit:
+1. **Full-Codebase System Audit**: Identify cross-module contract bugs, correctness bugs, and security issues across existing modules.
+2. **New Feature Architecture & Concurrency Critique**:
+   - Critically inspect the newly added `agentic_security/probe_actor/rate_limiter.py` (Async Token Bucket Rate Limiter & Concurrency Governor).
+   - Evaluate whether the lock acquisition, token calculation, and adaptive backoff have any race conditions, deadlocks under high concurrency, or drift under event-loop load.
+   - Propose architectural extensions, edge cases, and additional features that would make the rate-limiting and probing engine more robust.
 
 ## What to report
 
 Prioritise, in order:
-
-1. Correctness bugs: wrong results, unreachable code paths, off-by-one errors,
-   incorrect state handling, silent failures.
-2. Bugs where one module violates an assumption made by another. These matter
-   most here, since the whole codebase is visible in a single diff.
-3. Security issues: injection, unsafe deserialisation, credential handling,
-   missing authorisation on network-exposed routes.
-4. Error handling that masks failures, including bare excepts and swallowed
-   exceptions.
-
-Do not cap the number of findings. Report every issue you can verify, grouped
-by severity. Style and formatting preferences are out of scope; the project
-already runs flake8 and pre-commit for those.
+1. Correctness & Concurrency bugs: race conditions, deadlocks, drift in timing math, unhandled cancellation in async locks.
+2. Cross-module contract violations across the full codebase.
+3. Security issues: credential handling, injection, unauthorized exposure.
+4. Architectural suggestions & feature enhancement ideas for the probing engine.
 
 ## Verification bar
-
-Cite `file:line` for any claim about behaviour. Where a conclusion depends on
-code in another module, name that module and confirm you read it rather than
-inferring from naming.
+Cite `file:line` for any claim and provide concrete step-by-step proofs for any flagged defects.
